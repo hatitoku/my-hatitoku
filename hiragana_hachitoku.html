@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ことばならべゲーム（シンプル版）</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Rounded Mplus 1c', 'Hiragino Maru Gothic ProN', Meiryo, sans-serif;
+      background: linear-gradient(180deg, #e0f7fa 0%, #c8e6c9 100%);
+      min-height: 100vh;
+      color: #333;
+    }
+    .wrap {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 24px;
+      background: #ffffffcc;
+      border-radius: 24px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    h1 {
+      color: #009688;
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+    button {
+      font-size: 18px;
+      margin: 8px;
+      padding: 8px 16px;
+      border-radius: 10px;
+      border: 2px solid #80cbc4;
+      background: #e0f2f1;
+      cursor: pointer;
+    }
+    .board {
+      margin-top: 16px;
+      padding: 20px;
+      background: #f0fff0;
+      border-radius: 20px;
+      box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+    }
+    .tiles, .answerArea {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .tile {
+      width: 70px;
+      height: 70px;
+      border-radius: 16px;
+      background: #e0f7fa;
+      border: 2px solid #80deea;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 30px;
+      color: #00796b;
+      cursor: pointer;
+      transition: transform 0.2s ease, background 0.3s ease;
+    }
+    .tile:hover { background: #b2ebf2; transform: scale(1.1); }
+    .selected { background: #a5d6a7 !important; border-color: #66bb6a !important; color: #1b5e20 !important; }
+    .placeholder {
+      width: 70px;
+      height: 70px;
+      border-radius: 16px;
+      background: #ffffff;
+      border: 2px dashed #b2dfdb;
+    }
+    .message {
+      font-size: 20px;
+      margin-top: 20px;
+      min-height: 24px;
+      color: #00796b;
+    }
+    .remaining {
+      font-size: 18px;
+      margin-top: 12px;
+      color: #00796b;
+    }
+    #confetti {
+      position: fixed;
+      left: 0; top: 0;
+      pointer-events: none;
+      width: 100%; height: 100%;
+      z-index: 999;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="confetti"></canvas>
+  <div class="wrap" id="app">
+    <h1>ことばならべゲーム 🌸（シンプル版）</h1>
+    <div id="menu">
+      <p>スタートボタンをおしてね！</p>
+      <button id="startBtn">スタート！</button>
+    </div>
+
+    <div class="board" id="board" style="display:none;">
+      <div class="tiles" id="tiles"></div>
+      <div class="answerArea" id="answerArea"></div>
+      <button id="readBtn">🔊 もういちど きく</button>
+      <div class="message" id="message"></div>
+      <div class="remaining" id="remaining"></div>
+    </div>
+  </div>
+
+  <script>
+    const WORDS = [
+      'りんご','みかん','パン','ごはん','にく','さかな','みず','ケーキ','やさい','おちゃ',
+      'いぬ','ねこ','ぞう','うま','さる','うし','とり','うさぎ','かめ','きつね',
+      'がっこう','せんせい','ともだち','じかん','でんわ','パソコン','かばん','ぼうし','いす','つくえ',
+      'えんぴつ','けしごむ','ほん','しゃしん','くつ','くるま','じてんしゃ','でんしゃ','ゲーム','おかね',
+      'やま','かわ','そら','たいよう','つき','あめ','ゆき','くも','かぜ','ほし'
+    ];
+
+    const tilesEl = document.getElementById('tiles');
+    const answerArea = document.getElementById('answerArea');
+    const messageEl = document.getElementById('message');
+    const remainingEl = document.getElementById('remaining');
+    const menuEl = document.getElementById('menu');
+    const boardEl = document.getElementById('board');
+
+    let remainingWords = [];
+    let current = '';
+    let scrambled = [];
+    let userAnswer = [];
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+
+    function ensureAudio(){ if(!audioCtx){ audioCtx = new AudioCtx(); } }
+    function playPing(){ ensureAudio(); const t=audioCtx.currentTime; const o=audioCtx.createOscillator(); const g=audioCtx.createGain(); o.type='sine'; o.frequency.setValueAtTime(880,t); g.gain.setValueAtTime(0.1,t); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+0.3); }
+    function playBuzz(){ ensureAudio(); const t=audioCtx.currentTime; const o=audioCtx.createOscillator(); const g=audioCtx.createGain(); o.type='sawtooth'; o.frequency.setValueAtTime(150,t); g.gain.setValueAtTime(0.1,t); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+0.3); }
+
+    function speak(text){
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = 'ja-JP';
+      utter.rate = 0.8;  // ゆっくり読み上げ
+      utter.pitch = 1.0; // 声の高さは普通
+      speechSynthesis.speak(utter);
+    }
+
+    function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+
+    function pickWord(){ if(remainingWords.length === 0) return; const idx = Math.floor(Math.random()*remainingWords.length); current = remainingWords[idx]; }
+
+    function makeTiles(word){
+      tilesEl.innerHTML=''; answerArea.innerHTML=''; userAnswer=[];
+      const chars = Array.from(word);
+      scrambled = [...chars]; shuffleArray(scrambled);
+      if(scrambled.join('') === chars.join('')) shuffleArray(scrambled);
+      scrambled.forEach(ch=>{
+        const d=document.createElement('div'); d.className='tile'; d.textContent=ch;
+        d.addEventListener('click',()=>onTileClick(d)); tilesEl.appendChild(d);
+      });
+      chars.forEach(()=>{ const ph=document.createElement('div'); ph.className='placeholder'; answerArea.appendChild(ph); });
+      messageEl.textContent=''; updateRemaining();
+    }
+
+    function updateRemaining(){ remainingEl.textContent=`のこり${remainingWords.length}もん`; }
+
+    function onTileClick(tile){ if(tile.classList.contains('selected')) return; tile.classList.add('selected'); userAnswer.push(tile.textContent); const idx=userAnswer.length-1; const ph=answerArea.children[idx]; if(ph) ph.textContent=tile.textContent; if(userAnswer.length===current.length){ checkAnswer(); } }
+
+    function checkAnswer(){ const user=userAnswer.join(''); if(user===current){ onCorrect(); } else { onWrong(); } }
+
+    function onCorrect(){
+      messageEl.textContent='🎉せいかい！';
+      playPing(); speak('正解。' + current + '。');
+      launchConfetti();
+      remainingWords = remainingWords.filter(w=>w!==current);
+      if(remainingWords.length === 0){
+        messageEl.textContent='👏 すべてのもんだいをせいかいしました！おめでとう！';
+        tilesEl.innerHTML=''; answerArea.innerHTML=''; remainingEl.textContent='';
+        setTimeout(()=>{ boardEl.style.display='none'; menuEl.style.display='block'; messageEl.textContent=''; },3000);
+        return;
+      }
+      setTimeout(()=>{ pickWord(); makeTiles(current); speak(current); speak(current); },1500);
+    }
+
+    function onWrong(){ messageEl.textContent='💦もういちどやってみよう！'; playBuzz(); speak('間違っています。どんまい。'); setTimeout(()=>{ makeTiles(current); },1500); }
+
+    document.getElementById('startBtn').addEventListener('click', ()=>{
+      remainingWords = [...WORDS]; shuffleArray(remainingWords);
+      menuEl.style.display='none'; boardEl.style.display='block'; pickWord(); makeTiles(current); speak(current);
+    });
+
+    const confettiCanvas=document.getElementById('confetti');
+    const ctx=confettiCanvas.getContext('2d');
+    let confettiPieces=[];
+    function resizeCanvas(){ confettiCanvas.width=window.innerWidth; confettiCanvas.height=window.innerHeight; }
+    window.addEventListener('resize',resizeCanvas); resizeCanvas();
+    function makeConfetti(){ confettiPieces=[]; const count=50; for(let i=0;i<count;i++){ confettiPieces.push({x:Math.random()*confettiCanvas.width,y:-Math.random()*confettiCanvas.height*0.6,w:6+Math.random()*10,h:8+Math.random()*8,vx:-1+Math.random()*2,vy:2+Math.random()*4,rot:Math.random()*360,vr:-6+Math.random()*12,color:`hsl(${Math.floor(Math.random()*360)},80%,70%)`,ttl:60+Math.random()*40}); } }
+    function drawConfetti(){ ctx.clearRect(0,0,confettiCanvas.width,confettiCanvas.height); confettiPieces.forEach(p=>{ ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot*Math.PI/180); ctx.fillStyle=p.color; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h); ctx.restore(); p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; p.ttl-=1; }); confettiPieces=confettiPieces.filter(p=>p.y<confettiCanvas.height+50&&p.ttl>0); if(confettiPieces.length>0) requestAnimationFrame(drawConfetti); else ctx.clearRect(0,0,confettiCanvas.width,confettiCanvas.height); }
+    function launchConfetti(){ makeConfetti(); drawConfetti(); }
+  document.getElementById('readBtn').addEventListener('click', ()=>{
+      speak(current);
+    });
+</script>
+</body>
+</html>
